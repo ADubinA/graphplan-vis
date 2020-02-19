@@ -51,13 +51,14 @@ class Action:
     eat = Action(expr("Eat(person, food)"), [precond_pos, precond_neg], [effect_add, effect_rem])
     """
 
-    def __init__(self, action, precond, effect):
+    def __init__(self, action, precond, effect, obj_type=None):
         self.name = action.op
         self.args = action.args
         self.precond_pos = precond[0]
         self.precond_neg = precond[1]
         self.effect_add = effect[0]
         self.effect_rem = effect[1]
+        self.obj_type = obj_type
 
     def __call__(self, kb, args):
         return self.act(kb, args)
@@ -429,21 +430,25 @@ class GraphPlan:
         self.graph = Graph(pddl, negkb)
         self.nogoods = []
         self.solution = []
+        self.pos = None
 
-    def check_leveloff(self):
-        first_check = (set(self.graph.levels[-1].current_state_pos) ==
-                       set(self.graph.levels[-2].current_state_pos))
-        second_check = (set(self.graph.levels[-1].current_state_neg) ==
-                        set(self.graph.levels[-2].current_state_neg))
+    def check_leveloff(self, depth=2):
 
-        if first_check and second_check:
+        pos_check = all(set(self.graph.levels[-i].current_state_pos) ==
+                       set(self.graph.levels[-(i+1)].current_state_pos)
+                        for i in range(1, depth + 1))
+        neg_check = all(set(self.graph.levels[-i].current_state_neg) ==
+                        set(self.graph.levels[-(i+1)].current_state_neg)
+                        for i in range(1, depth))
+
+        if pos_check and neg_check:
             return True
 
     def extract_solution(self, goals_pos, goals_neg, index):
         level = self.graph.levels[index]
         if not self.graph.non_mutex_goals(goals_pos+goals_neg, index):
             self.nogoods.append((level, goals_pos, goals_neg))
-            return
+            return False
 
         level = self.graph.levels[index-1]
 
@@ -467,9 +472,15 @@ class GraphPlan:
                     non_mutex_actions.pop(-1)
                     break
 
+        if not non_mutex_actions:
+            return False
+
         # Recursion
         for action_list in non_mutex_actions:
             if [action_list, index] not in self.solution:
+                if len(self.solution) > 1:
+                    if self.solution[-1][1] == index:
+                        self.solution.pop()
                 self.solution.append([action_list, index])
 
                 new_goals_pos = []
@@ -477,32 +488,48 @@ class GraphPlan:
                 for act in set(action_list):
                     if act in level.current_action_links_pos:
                         new_goals_pos = new_goals_pos + level.current_action_links_pos[act]
+                new_goals_pos = list(set(new_goals_pos))
 
                 for act in set(action_list):
                     if act in level.current_action_links_neg:
                         new_goals_neg = new_goals_neg + level.current_action_links_neg[act]
+                new_goals_neg = list(set(new_goals_neg))
 
                 if abs(index)+1 == len(self.graph.levels):
-                    return
+                    if all(goal in self.graph.levels[0].current_state_pos for goal in new_goals_pos):
+                        return True
+                    else:
+                        return False
                 elif (level, new_goals_pos, new_goals_neg) in self.nogoods:
-                    return
+                    return False
                 else:
-                    self.extract_solution(new_goals_pos, new_goals_neg, index-1)
+                    success = self.extract_solution(new_goals_pos, new_goals_neg, index-1)
+                    if success and index == -1:
+                        break
+                    elif success and index != -1:
+                        return True
+                    else:
+                        self.solution.pop()
 
-        # Level-Order multiple solutions
-        solution = []
-        for item in self.solution:
-            if item[1] == -1:
-                solution.append([])
-                solution[-1].append(item[0])
-            else:
-                solution[-1].append(item[0])
 
-        for num, item in enumerate(solution):
-            item.reverse()
-            solution[num] = item
 
-        return solution
+
+        if index == -1:
+            # Level-Order multiple solutions
+            solution = []
+            for item in self.solution:
+                if item[1] == -1:
+                    solution.append([])
+                    solution[-1].append(item[0])
+                else:
+                    solution[-1].append(item[0])
+
+            for num, item in enumerate(solution):
+                item.reverse()
+                solution[num] = item
+
+            return solution
+        return False
 
 
 def spare_tire_graphplan():
