@@ -7,6 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationTool
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 DEBUG = True
+import networkx as nx
 
 
 class MplCanvas(FigureCanvasQTAgg):
@@ -35,7 +36,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # self.domain_file_path = "examples/gripper/domain.pddl"
             # self.problem_file_path = "examples/gripper/p01.pddl"
             self.domain_file_path = "examples/blocksworld/domain.pddl"
-            self.problem_file_path = "examples/blocksworld/p02.pddl"
+            self.problem_file_path = "examples/blocksworld/p01.pddl"
         else:
             self.domain_file_path = None
             self.problem_file_path = None
@@ -51,58 +52,28 @@ class MainWindow(QtWidgets.QMainWindow):
             # self.gp.draw_no_op = False
 
         self.mutex_mode = False
-        self.first_action = None
-        self.second_action = None
 
     def _onclick(self, event):
         if not self.mutex_mode:
             return
 
-        clicked = min(self.gp.pos.items(), key=
-        lambda x: pow(x[1][0]-event.xdata, 2) + pow(x[1][1]-event.ydata, 2))
+        clicked = min(self.gp.pos.items(),
+                      key=lambda x: pow(x[1][0]-event.xdata, 2) + pow(x[1][1]-event.ydata, 2))
+        clicked = clicked[0]
 
-        # print(clicked)
-        # print('%s click: button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
-        #       ('double' if event.dblclick else 'single', event.button,
-        #        event.x, event.y, event.xdata, event.ydata))
+        mutexes = self.gp.get_nx_node_mutexes(self.mpl.axes, clicked)
 
-        if not self.first_action:
-            self.first_action = clicked[0]
+        self._after_mutex_press(clicked, mutexes)
 
-        elif not self.second_action:
-            self.second_action = clicked[0]
+    def _after_mutex_press(self, clicked, mutexes):
+        self._refresh_graph_view()
 
-        self._after_mutex_press()
+        nx.draw_networkx_nodes(self.gp.nx_graph, self.gp.pos, [clicked],
+                               node_shape="s", node_color="yellow", ax=self.mpl.axes)
 
-    def _after_mutex_press(self):
-        if not self.first_action or not self.second_action:
-            return
-
-        is_mutex = self.gp.is_nx_graph_mutex(self.first_action,self.second_action)
-
-        first_action = self.gp.nx_graph.nodes[self.first_action]
-        second_action = self.gp.nx_graph.nodes[self.second_action]
-        first_action_name = first_action["name"]
-        second_action_name = second_action["name"]
-
-        result_string = f"The actions:\n {first_action_name}\n {second_action_name} \n"
-        if is_mutex:
-            result_string += "are a mutex"
-        else:
-            result_string += "are not a mutex"
-
-        if first_action["node_type"] != "action" or second_action["node_type"] != "action":
-            result_string = "You are in mutex select mode.\n Please only click on action nodes."
-
-        elif first_action["level_num"] != second_action["level_num"]:
-            result_string = "Actions on different levels can't be mutex."
-
-        self.first_action = None
-        self.second_action = None
-
-        ms = QtWidgets.QMessageBox()
-        ms.setText(result_string)
-        ms.exec_()
+        nx.draw_networkx_nodes(self.gp.nx_graph, self.gp.pos, mutexes,
+                               node_shape="s", node_color="orange", ax=self.mpl.axes)
+        self._refresh_figure()
 
     def _construct_main_menu(self, fig=None):
 
@@ -202,11 +173,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.gp.is_ready:
             return
         solution = self.gp.solve()
-        self._refresh_graph_view()
-        solution_string = self.gp.format_solution(solution)
-        ms = QtWidgets.QMessageBox()
-        ms.setText(solution_string)
-        ms.exec_()
+        self.gp._create_nx_graph()
+        self._set_empty_plot()
+        solution_nodes = self.gp.get_solution_nx_nodes(solution)
+
+        self.gp.draw_graph(self.mpl.axes, alpha=0.2)
+        self.gp.draw_graph(self.mpl.axes, draw_list=solution_nodes, keep_old_layout=True)
+        self._refresh_figure()
+        # solution_string = self.gp.format_solution(solution)
+        # ms = QtWidgets.QMessageBox()
+        # ms.setText(solution_string)
+        # ms.exec_()
 
     def action_reset_graph(self):
 
@@ -262,8 +239,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_graph_view(self):
         self.mpl.axes.cla()
-        ax = self.gp.visualize(self.mpl.axes)
-        # self.mpl.axes[0] = ax
+        self.gp.visualize(self.mpl.axes, alpha=1)
         self._refresh_figure()
 
 

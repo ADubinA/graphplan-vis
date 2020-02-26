@@ -123,11 +123,11 @@ class GraphPlanVis:
         self.draw_previous = True
         self.show_no_op_at_solution = False
 
-    def visualize(self, ax=None, for_qt=True):
+    def visualize(self, ax=None, draw_list=None, alpha=1, for_qt=True):
 
         self.nx_graph = nx.DiGraph()
         self._create_nx_graph()
-        self.draw_graph(len(self.graphplan.graph.levels), ax=ax)
+        self.draw_graph(ax=ax, draw_list=draw_list, alpha=alpha)
         if for_qt:
             return ax
         else:
@@ -265,11 +265,17 @@ class GraphPlanVis:
         name_change = str(name).replace("Persistence","P")
         return f"{level_num}_{name_change}_{node_type}"
 
-    def draw_graph(self, max_level, ax=None):
+    def draw_graph(self, ax=None, draw_list=None, alpha=1, keep_old_layout=False):
 
-        nodes_to_draw = [node for node in self.nx_graph.nodes if self.is_to_draw(self.nx_graph.nodes[node])]
+        if not draw_list:
+            draw_list = self.nx_graph.nodes.keys()
+        max_level = len(self.graphplan.graph.levels)
+
+        nodes_to_draw = [node for node in self.nx_graph.nodes
+                         if self.is_to_draw(self.nx_graph.nodes[node]) and node in draw_list]
         edges_to_draw = [edge for edge in self.nx_graph.edges if edge[0] in nodes_to_draw and edge[1] in nodes_to_draw]
-        labels_to_draw = {node: self.nx_graph.nodes[node]["display_name"] for node in self.nx_graph.nodes if node in nodes_to_draw}
+        labels_to_draw = {node: self.nx_graph.nodes[node]["display_name"] for node in self.nx_graph.nodes
+                          if node in nodes_to_draw}
         # iterate over nodes
         nodes_array = []
         for node in self.nx_graph.nodes:
@@ -286,30 +292,50 @@ class GraphPlanVis:
                 else:
                     nodes_array[node_level]["state"].append(node)
 
-        pos = self.graphplan_layout(nodes_array, max_level)
-        self.pos = pos
+        if not keep_old_layout:
+            pos = self.graphplan_layout(nodes_array, max_level)
+            self.pos = pos
+        else:
+            pos = self.pos
         # nx.draw_networkx_nodes(self.nx_graph, pos, nodes_to_draw)
-        self._draw_nx_nodes(nodes_array,pos, ax=ax)
-        nx.draw_networkx_edges(self.nx_graph, pos, edges_to_draw, ax=ax)
-        nx.draw_networkx_labels(self.nx_graph, pos, labels=labels_to_draw,ax=ax)
+        self._draw_nx_nodes(nodes_array,pos, ax=ax, alpha=alpha)
+        nx.draw_networkx_edges(self.nx_graph, pos, edges_to_draw, ax=ax, alpha=alpha)
+        label_pos = {label:(posi[0],posi[1]+0.01) for label, posi in pos.items()}
+        nx.draw_networkx_labels(self.nx_graph, label_pos, labels=labels_to_draw,ax=ax, alpha=alpha)
         # nx.draw(self.nx_graph, pos, node_size=300, node_color='#ffaaaa', with_labels=True)
         # plt.show()
 
-    def draw_graph_mutexes(self, ax, nx_nodes=None):
-        if not nx_nodes:
-            nx_nodes = [node for node in self.nx_graph.nodes.keys()
-                        if self.nx_graph.nodes[node]["node_type"]=="action"]
+    def get_solution_nx_nodes(self, solution):
+        all_nodes_set = set()
+        reverse_nx = self.nx_graph.reverse()
 
-        nodes_pairs = list(itertools.combinations(nx_nodes, 2))
+        for level in range(len(solution[0])):
+            solution_level = solution[0][level]
+            for action in solution_level:
 
-        mutex_pairs = []
-        for nodes_pair in nodes_pairs:
-            if self.is_nx_graph_mutex(nodes_pair[0], nodes_pair[1]):
-                mutex_pairs.append(nodes_pair)
+                # add actions
+                nx_graph_name = self._create_node_name("action", action, level+1)
+                all_nodes_set.add(nx_graph_name)
 
-        nx.draw_networkx_edges(self.nx_graph, self.pos, mutex_pairs, ax=ax,
-                               style="dashed", edge_color="red")
-        return mutex_pairs
+                # get everying connected to the action
+                all_nodes_set.update(nx.neighbors(self.nx_graph, nx_graph_name))
+                all_nodes_set.update(nx.neighbors(reverse_nx, nx_graph_name))
+
+        return list(all_nodes_set)
+
+
+    def get_nx_node_mutexes(self, ax, nx_node):
+        level = self.nx_graph.nodes[nx_node]["level_num"]
+        nx_nodes_options = [node for node in self.nx_graph.nodes.keys()
+                            if self.nx_graph.nodes[node]["node_type"] == "action" and
+                            self.nx_graph.nodes[node]["level_num"] == level]
+
+        mutexs = []
+        for nx_nodes_option in nx_nodes_options:
+            if self.is_nx_graph_mutex(nx_node, nx_nodes_option):
+                mutexs.append(nx_nodes_option)
+
+        return mutexs
 
     def is_nx_graph_mutex(self,node1, node2):
 
@@ -333,7 +359,7 @@ class GraphPlanVis:
         return False
 
 
-    def _draw_nx_nodes(self, nodes_array, pos, ax=None):
+    def _draw_nx_nodes(self, nodes_array, pos, ax=None, alpha=1):
         for node_array in nodes_array:
 
             pos_state_nodes = [node for node in node_array["state"]
@@ -341,11 +367,11 @@ class GraphPlanVis:
             neg_state_nodes = [node for node in node_array["state"]
                                if self.nx_graph.nodes[node]["node_type"] == "neg_state"]
 
-            nx.draw_networkx_nodes(self.nx_graph, pos, pos_state_nodes,node_color="green",ax=ax)
-            nx.draw_networkx_nodes(self.nx_graph, pos, neg_state_nodes, node_color="red",ax=ax)
+            nx.draw_networkx_nodes(self.nx_graph, pos, pos_state_nodes,node_color="green",ax=ax,alpha=alpha)
+            nx.draw_networkx_nodes(self.nx_graph, pos, neg_state_nodes, node_color="red",ax=ax,alpha=alpha)
 
             # draw action nodes
-            nx.draw_networkx_nodes(self.nx_graph, pos, node_array["action"],node_shape="s",ax=ax)
+            nx.draw_networkx_nodes(self.nx_graph, pos, node_array["action"],node_shape="s",ax=ax,alpha=alpha)
 
     @staticmethod
     def graphplan_layout(nodes_array, max_level):
